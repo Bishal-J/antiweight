@@ -2,131 +2,49 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, View, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getTodayKey, STORAGE_KEY_PREFIX } from 'lib/workoutStorage';
+import { CUSTOM_EXERCISES_KEY, getTodayKey } from 'lib/workoutStorage';
+import {
+  BASE_EXERCISES,
+  BASE_TOTAL_EXERCISES,
+  WORKOUT_SECTIONS,
+  WorkoutExercise,
+  WorkoutSection,
+} from 'config/workoutData';
+import { TimerModal } from 'components/TimerModal';
 
-type Exercise = {
-  id: string;
-  name: string;
-  details: string;
+type SectionWithExercises = WorkoutSection & {
+  exercises: WorkoutExercise[];
 };
-
-type Section = {
-  id: string;
-  title: string;
-  emoji: string;
-  subtitle?: string;
-  exercises: Exercise[];
-};
-
-const WORKOUT_SECTIONS: Section[] = [
-  {
-    id: 'warmup',
-    title: 'Warm-Up (5–8 min)',
-    emoji: '🔥',
-    exercises: [
-      { id: 'warmup_jumping_jacks', name: 'Jumping Jacks', details: '60 reps' },
-      { id: 'warmup_squats', name: 'Squats', details: '20 reps' },
-      { id: 'warmup_pushups', name: 'Push-ups', details: '15 reps' },
-      { id: 'warmup_high_knees', name: 'High Knees', details: '30 sec' },
-      { id: 'warmup_arm_circles', name: 'Arm Circles', details: '30 sec' },
-      { id: 'warmup_lunges', name: 'Lunges', details: '20 reps' },
-    ],
-  },
-  {
-    id: 'push',
-    title: 'Push (Chest + Shoulders + Triceps)',
-    emoji: '🏋️',
-    exercises: [
-      { id: 'push_pushups', name: 'Push-ups', details: '4 × 20' },
-      {
-        id: 'push_decline',
-        name: 'Decline Push-ups',
-        details: '3 × 15 (feet on bed/chair)',
-      },
-      { id: 'push_diamond', name: 'Diamond Push-ups', details: '3 × 12' },
-      { id: 'push_pike', name: 'Pike Push-ups (shoulders)', details: '3 × 12' },
-    ],
-  },
-  {
-    id: 'legs',
-    title: 'Legs',
-    emoji: '🦵',
-    exercises: [
-      { id: 'legs_squats', name: 'Bodyweight Squats', details: '4 × 25' },
-      { id: 'legs_walking_lunges', name: 'Walking Lunges', details: '3 × 20 each leg' },
-      { id: 'legs_jump_squats', name: 'Jump Squats', details: '3 × 15' },
-      { id: 'legs_wall_sit', name: 'Wall Sit', details: '3 × 60 sec' },
-    ],
-  },
-  {
-    id: 'core',
-    title: 'Core',
-    emoji: '🧠',
-    exercises: [
-      { id: 'core_plank', name: 'Plank', details: '3 × 60 sec' },
-      { id: 'core_leg_raises', name: 'Leg Raises', details: '3 × 20' },
-      { id: 'core_russian_twists', name: 'Russian Twists', details: '3 × 30' },
-      { id: 'core_flutter_kicks', name: 'Flutter Kicks', details: '3 × 40' },
-    ],
-  },
-  {
-    id: 'skill',
-    title: 'Calisthenics Skill (Strength + Balance)',
-    emoji: '🤸',
-    subtitle: 'Handstand practice. If hard → do pike push-ups.',
-    exercises: [
-      {
-        id: 'skill_wall_handstand',
-        name: 'Wall Handstand Hold',
-        details: '3 × 30–45 sec',
-      },
-      {
-        id: 'skill_handstand_pushup_practice',
-        name: 'Handstand Push-up Practice',
-        details: '3 × 5–8',
-      },
-    ],
-  },
-  {
-    id: 'fatburn',
-    title: 'Fat Burning (instead of walking)',
-    emoji: '⚡',
-    exercises: [
-      { id: 'fatburn_mountain_climbers', name: 'Mountain Climbers', details: '3 × 45 sec' },
-      { id: 'fatburn_burpees', name: 'Burpees', details: '3 × 12' },
-      { id: 'fatburn_high_knees', name: 'High Knees', details: '3 × 40 sec' },
-    ],
-  },
-  {
-    id: 'finisher',
-    title: 'Extreme Finisher',
-    emoji: '💀',
-    subtitle: 'Complete before ending workout. Break into sets if needed.',
-    exercises: [
-      { id: 'finisher_squats', name: 'Squats', details: '100 total' },
-      { id: 'finisher_pushups', name: 'Push-ups', details: '100 total' },
-      { id: 'finisher_situps', name: 'Sit-ups', details: '100 total' },
-    ],
-  },
-];
-
-export const TOTAL_EXERCISES = WORKOUT_SECTIONS.reduce(
-  (total, section) => total + section.exercises.length,
-  0
-);
 
 export const WorkoutScreen: React.FC = () => {
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
+  const [sections, setSections] = useState<SectionWithExercises[]>(() => {
+    const bySection: Record<string, WorkoutExercise[]> = {};
+    for (const ex of BASE_EXERCISES) {
+      if (!bySection[ex.sectionId]) bySection[ex.sectionId] = [];
+      bySection[ex.sectionId].push(ex);
+    }
+    return WORKOUT_SECTIONS.map((section) => ({
+      ...section,
+      exercises: bySection[section.id] ?? [],
+    }));
+  });
 
   const allExerciseIds = useMemo(
-    () => WORKOUT_SECTIONS.flatMap((section) => section.exercises.map((ex) => ex.id)),
-    []
+    () => sections.flatMap((section) => section.exercises.map((ex) => ex.id)),
+    [sections]
   );
 
-  const totalExercises = allExerciseIds.length;
+  const totalExercises = allExerciseIds.length || BASE_TOTAL_EXERCISES;
   const completedCount = completedIds.size;
   const progress = totalExercises === 0 ? 0 : Math.round((completedCount / totalExercises) * 100);
+
+  const [timerExercise, setTimerExercise] = useState<WorkoutExercise | null>(null);
+  const [timerInitial, setTimerInitial] = useState(0);
+  const [timerRemaining, setTimerRemaining] = useState(0);
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [timerCompleted, setTimerCompleted] = useState(false);
 
   const loadProgress = useCallback(async () => {
     try {
@@ -152,7 +70,38 @@ export const WorkoutScreen: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    loadProgress();
+    const load = async () => {
+      await loadProgress();
+
+      try {
+        const storedCustom = await AsyncStorage.getItem(CUSTOM_EXERCISES_KEY);
+        if (storedCustom) {
+          const parsed: WorkoutExercise[] = JSON.parse(storedCustom);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setSections((prev) => {
+              const byId = new Map<string, SectionWithExercises>();
+              prev.forEach((s) =>
+                byId.set(s.id, {
+                  ...s,
+                  exercises: [...s.exercises],
+                })
+              );
+              for (const ex of parsed) {
+                const target = byId.get(ex.sectionId);
+                if (target) {
+                  target.exercises.push(ex);
+                }
+              }
+              return Array.from(byId.values());
+            });
+          }
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    void load();
   }, [loadProgress]);
 
   const toggleExercise = (id: string) => {
@@ -172,6 +121,63 @@ export const WorkoutScreen: React.FC = () => {
     setCompletedIds(new Set());
     void AsyncStorage.removeItem(getTodayKey());
   };
+
+  const handleTimerStartPause = () => {
+    if (!timerExercise) return;
+    if (timerRunning) {
+      setTimerRunning(false);
+    } else {
+      if (timerRemaining <= 0) {
+        setTimerRemaining(timerInitial || 0);
+        setTimerCompleted(false);
+      }
+      setTimerRunning(true);
+    }
+  };
+
+  const handleTimerReset = () => {
+    setTimerRemaining(timerInitial);
+    setTimerRunning(false);
+    setTimerCompleted(false);
+  };
+
+  const openTimerForExercise = (exercise: WorkoutExercise) => {
+    if (!exercise.timerSeconds) return;
+    const initial = exercise.timerSeconds;
+    setTimerExercise(exercise);
+    setTimerInitial(initial);
+    setTimerRemaining(initial);
+    setTimerRunning(false);
+    setTimerCompleted(false);
+  };
+
+  const closeTimer = () => {
+    setTimerExercise(null);
+    setTimerRunning(false);
+    setTimerCompleted(false);
+  };
+
+  useEffect(() => {
+    if (!timerRunning || !timerExercise) return;
+    const id = setInterval(() => {
+      setTimerRemaining((prev) => {
+        if (prev <= 1) {
+          clearInterval(id);
+          setTimerRunning(false);
+          setTimerCompleted(true);
+          setCompletedIds((prevCompleted) => {
+            const next = new Set(prevCompleted);
+            next.add(timerExercise.id);
+            void saveProgress(next);
+            return next;
+          });
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [timerRunning, timerExercise, saveProgress]);
 
   const todayLabel = useMemo(() => {
     const today = new Date();
@@ -203,8 +209,10 @@ export const WorkoutScreen: React.FC = () => {
           </View>
           <View className="h-2 rounded-full bg-slate-800 overflow-hidden">
             <View
-              className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-400"
-              style={{ width: `${progress}%` }}
+              className="h-full rounded-full bg-emerald-400"
+              style={{
+                width: `${Math.max(0, Math.min(100, progress))}%`,
+              }}
             />
           </View>
           <View className="flex-row items-center justify-between mt-3">
@@ -231,7 +239,7 @@ export const WorkoutScreen: React.FC = () => {
             <Text className="text-slate-400 text-sm">Loading your plan…</Text>
           </View>
         ) : (
-          WORKOUT_SECTIONS.map((section) => (
+          sections.map((section) => (
             <View
               key={section.id}
               className="mb-5 rounded-2xl bg-slate-900/80 p-4 border border-slate-800"
@@ -252,6 +260,7 @@ export const WorkoutScreen: React.FC = () => {
                   <Pressable
                     key={exercise.id}
                     onPress={() => toggleExercise(exercise.id)}
+                    onLongPress={() => openTimerForExercise(exercise)}
                     className="flex-row items-center py-2 px-2 rounded-xl mb-1 bg-slate-900 active:bg-slate-800"
                   >
                     <View
@@ -282,12 +291,25 @@ export const WorkoutScreen: React.FC = () => {
           ))
         )}
 
-        <View className="mt-2 mb-6 items-center">
+        <View className="mt-2 items-center">
           <Text className="text-[10px] text-slate-600">
             Built just for you. Stay consistent.
           </Text>
         </View>
       </ScrollView>
+
+      {timerExercise && (
+        <TimerModal
+          exercise={timerExercise}
+          initialSeconds={timerInitial}
+          remainingSeconds={timerRemaining}
+          running={timerRunning}
+          completed={timerCompleted}
+          onClose={closeTimer}
+          onStartPause={handleTimerStartPause}
+          onReset={handleTimerReset}
+        />
+      )}
     </SafeAreaView>
   );
 };

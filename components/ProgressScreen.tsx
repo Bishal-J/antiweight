@@ -2,8 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { STORAGE_KEY_PREFIX } from 'lib/workoutStorage';
-import { TOTAL_EXERCISES } from 'components/WorkoutScreen';
+import { CUSTOM_EXERCISES_KEY, STORAGE_KEY_PREFIX } from 'lib/workoutStorage';
+import { BASE_TOTAL_EXERCISES } from 'config/workoutData';
 
 type DaySummary = {
   dateKey: string;
@@ -69,6 +69,7 @@ const computeStreaks = (days: DaySummary[]) => {
 export const ProgressScreen: React.FC = () => {
   const [days, setDays] = useState<DaySummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [customExerciseCount, setCustomExerciseCount] = useState(0);
 
   useEffect(() => {
     const load = async () => {
@@ -94,9 +95,9 @@ export const ProgressScreen: React.FC = () => {
             const parsed: string[] = JSON.parse(value);
             const completedExercises = parsed.length;
             const percent =
-              TOTAL_EXERCISES === 0
+              totalExercisesToday === 0
                 ? 0
-                : Math.round((completedExercises / TOTAL_EXERCISES) * 100);
+                : Math.round((completedExercises / totalExercisesToday) * 100);
 
             summaries.push({
               dateKey: key,
@@ -111,6 +112,19 @@ export const ProgressScreen: React.FC = () => {
 
         summaries.sort((a, b) => b.date.getTime() - a.date.getTime());
         setDays(summaries);
+
+        // load current number of custom exercises for percentage calculations
+        try {
+          const storedCustom = await AsyncStorage.getItem(CUSTOM_EXERCISES_KEY);
+          if (storedCustom) {
+            const parsed: string[] = JSON.parse(storedCustom);
+            if (Array.isArray(parsed)) {
+              setCustomExerciseCount(parsed.length);
+            }
+          }
+        } catch {
+          // ignore
+        }
       } finally {
         setIsLoading(false);
       }
@@ -137,6 +151,7 @@ export const ProgressScreen: React.FC = () => {
   }, [days]);
 
   const totalActiveDays = days.filter((d) => d.completedExercises > 0).length;
+  const totalExercisesToday = BASE_TOTAL_EXERCISES + customExerciseCount;
 
   return (
     <SafeAreaView className="flex-1 bg-slate-950">
@@ -243,7 +258,7 @@ export const ProgressScreen: React.FC = () => {
                     })}
                   </Text>
                   <Text className="text-slate-500 text-xs">
-                    {day.completedExercises}/{TOTAL_EXERCISES} exercises
+                    {day.completedExercises}/{totalExercisesToday} exercises
                   </Text>
                 </View>
                 <View className="items-end">
