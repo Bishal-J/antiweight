@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, View, Pressable } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { getTodayKey, STORAGE_KEY_PREFIX } from 'lib/workoutStorage';
 
 type Exercise = {
   id: string;
@@ -19,35 +21,30 @@ type Section = {
 const WORKOUT_SECTIONS: Section[] = [
   {
     id: 'warmup',
-    title: 'Warm-up (5–7 min)',
+    title: 'Warm-Up (5–8 min)',
     emoji: '🔥',
     exercises: [
-      { id: 'warmup_jumping_jacks', name: 'Jumping Jacks', details: '50 reps' },
-      { id: 'warmup_squats', name: 'Bodyweight Squats', details: '20 reps' },
+      { id: 'warmup_jumping_jacks', name: 'Jumping Jacks', details: '60 reps' },
+      { id: 'warmup_squats', name: 'Squats', details: '20 reps' },
       { id: 'warmup_pushups', name: 'Push-ups', details: '15 reps' },
       { id: 'warmup_high_knees', name: 'High Knees', details: '30 sec' },
       { id: 'warmup_arm_circles', name: 'Arm Circles', details: '30 sec' },
+      { id: 'warmup_lunges', name: 'Lunges', details: '20 reps' },
     ],
   },
   {
     id: 'push',
-    title: 'Push (Chest + Triceps)',
+    title: 'Push (Chest + Shoulders + Triceps)',
     emoji: '🏋️',
     exercises: [
       { id: 'push_pushups', name: 'Push-ups', details: '4 × 20' },
-      { id: 'push_decline', name: 'Decline Push-ups', details: '3 × 15 (feet on chair)' },
+      {
+        id: 'push_decline',
+        name: 'Decline Push-ups',
+        details: '3 × 15 (feet on bed/chair)',
+      },
       { id: 'push_diamond', name: 'Diamond Push-ups', details: '3 × 12' },
-    ],
-  },
-  {
-    id: 'pull',
-    title: 'Pull (Back + Arms)',
-    emoji: '🏋️',
-    subtitle: 'If you have a bar, otherwise do floor alternatives',
-    exercises: [
-      { id: 'pull_pullups', name: 'Pull-ups / Doorframe Rows', details: '4 × max' },
-      { id: 'pull_superman', name: 'Superman Hold', details: '3 × 40 sec' },
-      { id: 'pull_backpack_rows', name: 'Backpack Rows', details: '3 × 15' },
+      { id: 'push_pike', name: 'Pike Push-ups (shoulders)', details: '3 × 12' },
     ],
   },
   {
@@ -55,21 +52,10 @@ const WORKOUT_SECTIONS: Section[] = [
     title: 'Legs',
     emoji: '🦵',
     exercises: [
-      { id: 'legs_squats', name: 'Squats', details: '4 × 25' },
-      { id: 'legs_lunges', name: 'Lunges', details: '3 × 20 each leg' },
-      { id: 'legs_bulgarian', name: 'Bulgarian Split Squats', details: '3 × 12 each leg' },
-    ],
-  },
-  {
-    id: 'cardio',
-    title: 'Cardio Replacement',
-    emoji: '🔥',
-    subtitle: 'High calorie burn instead of long walks',
-    exercises: [
-      { id: 'cardio_wall_sit', name: 'Wall Sit', details: '3 × 1 min' },
-      { id: 'cardio_jump_squats', name: 'Jump Squats', details: '3 × 20' },
-      { id: 'cardio_mountain_climbers', name: 'Mountain Climbers', details: '3 × 40 sec' },
-      { id: 'cardio_burpees', name: 'Burpees', details: '3 × 12' },
+      { id: 'legs_squats', name: 'Bodyweight Squats', details: '4 × 25' },
+      { id: 'legs_walking_lunges', name: 'Walking Lunges', details: '3 × 20 each leg' },
+      { id: 'legs_jump_squats', name: 'Jump Squats', details: '3 × 15' },
+      { id: 'legs_wall_sit', name: 'Wall Sit', details: '3 × 60 sec' },
     ],
   },
   {
@@ -77,33 +63,57 @@ const WORKOUT_SECTIONS: Section[] = [
     title: 'Core',
     emoji: '🧠',
     exercises: [
-      { id: 'core_plank', name: 'Plank', details: '3 × 1 min' },
+      { id: 'core_plank', name: 'Plank', details: '3 × 60 sec' },
       { id: 'core_leg_raises', name: 'Leg Raises', details: '3 × 20' },
       { id: 'core_russian_twists', name: 'Russian Twists', details: '3 × 30' },
+      { id: 'core_flutter_kicks', name: 'Flutter Kicks', details: '3 × 40' },
+    ],
+  },
+  {
+    id: 'skill',
+    title: 'Calisthenics Skill (Strength + Balance)',
+    emoji: '🤸',
+    subtitle: 'Handstand practice. If hard → do pike push-ups.',
+    exercises: [
+      {
+        id: 'skill_wall_handstand',
+        name: 'Wall Handstand Hold',
+        details: '3 × 30–45 sec',
+      },
+      {
+        id: 'skill_handstand_pushup_practice',
+        name: 'Handstand Push-up Practice',
+        details: '3 × 5–8',
+      },
+    ],
+  },
+  {
+    id: 'fatburn',
+    title: 'Fat Burning (instead of walking)',
+    emoji: '⚡',
+    exercises: [
+      { id: 'fatburn_mountain_climbers', name: 'Mountain Climbers', details: '3 × 45 sec' },
+      { id: 'fatburn_burpees', name: 'Burpees', details: '3 × 12' },
+      { id: 'fatburn_high_knees', name: 'High Knees', details: '3 × 40 sec' },
     ],
   },
   {
     id: 'finisher',
-    title: 'Finisher (Extreme Fat Burner)',
+    title: 'Extreme Finisher',
     emoji: '💀',
-    subtitle: 'Do once at the end. Break into sets if needed.',
+    subtitle: 'Complete before ending workout. Break into sets if needed.',
     exercises: [
-      { id: 'finisher_pushups', name: 'Push-ups', details: '100 total' },
       { id: 'finisher_squats', name: 'Squats', details: '100 total' },
+      { id: 'finisher_pushups', name: 'Push-ups', details: '100 total' },
       { id: 'finisher_situps', name: 'Sit-ups', details: '100 total' },
     ],
   },
 ];
 
-const STORAGE_KEY_PREFIX = 'daily_workout_progress_';
-
-const getTodayKey = () => {
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, '0');
-  const dd = String(today.getDate()).padStart(2, '0');
-  return `${STORAGE_KEY_PREFIX}${yyyy}-${mm}-${dd}`;
-};
+export const TOTAL_EXERCISES = WORKOUT_SECTIONS.reduce(
+  (total, section) => total + section.exercises.length,
+  0
+);
 
 export const WorkoutScreen: React.FC = () => {
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
@@ -174,12 +184,15 @@ export const WorkoutScreen: React.FC = () => {
   }, []);
 
   return (
-    <View className="flex-1 bg-slate-950">
-      <View className="px-5 pt-12 pb-4">
+    <SafeAreaView className="flex-1 bg-slate-950">
+      <View className="px-5 pb-4">
         <Text className="text-slate-100 text-3xl font-extrabold tracking-tight">
           AntiWeight
         </Text>
         <Text className="text-slate-400 mt-1 text-sm">{todayLabel}</Text>
+        <Text className="text-slate-500 mt-1 text-xs">
+          Daily full body · No equipment · Stay moving
+        </Text>
 
         <View className="mt-4 rounded-2xl bg-slate-900/80 p-4 border border-slate-800">
           <View className="flex-row items-center justify-between mb-2">
@@ -275,7 +288,7 @@ export const WorkoutScreen: React.FC = () => {
           </Text>
         </View>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 };
 
