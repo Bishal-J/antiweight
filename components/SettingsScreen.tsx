@@ -1,44 +1,77 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useMemo, useState } from 'react';
-import { ScrollView, Text, TextInput, View, Pressable } from 'react-native';
+import { ScrollView, Text, View, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { CUSTOM_EXERCISES_KEY } from 'lib/workoutStorage';
+import { BASE_EXERCISE_OVERRIDES_KEY, CUSTOM_EXERCISES_KEY } from 'lib/workoutStorage';
 import { BASE_EXERCISES, WORKOUT_SECTIONS, WorkoutExercise, WorkoutSectionId } from 'config/workoutData';
+import { NewExerciseForm } from './NewExerciseForm';
+import { BaseExerciseItem } from './BaseExerciseItem';
+
 
 type CustomExercise = WorkoutExercise;
 
+type BaseExerciseOverride = {
+  id: string;
+  name?: string;
+  details?: string;
+  timerSeconds?: number;
+  deleted?: boolean;
+};
+
 export const SettingsScreen: React.FC = () => {
+  // --- State ---
   const [selectedSectionId, setSelectedSectionId] = useState<WorkoutSectionId>('warmup');
   const [name, setName] = useState('');
   const [details, setDetails] = useState('');
   const [useTimer, setUseTimer] = useState(false);
   const [timerSecondsInput, setTimerSecondsInput] = useState('');
   const [customExercises, setCustomExercises] = useState<CustomExercise[]>([]);
+  const [baseOverrides, setBaseOverrides] = useState<BaseExerciseOverride[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  const [editingBaseId, setEditingBaseId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editDetails, setEditDetails] = useState('');
+  const [editUseTimer, setEditUseTimer] = useState(false);
+  const [editTimerSecondsInput, setEditTimerSecondsInput] = useState('');
+
+  // --- Load from AsyncStorage ---
   useEffect(() => {
     const load = async () => {
       try {
-        const stored = await AsyncStorage.getItem(CUSTOM_EXERCISES_KEY);
-        if (stored) {
-          const parsed: CustomExercise[] = JSON.parse(stored);
-          if (Array.isArray(parsed)) {
-            setCustomExercises(parsed);
-          }
+        const [storedCustom, storedOverrides] = await Promise.all([
+          AsyncStorage.getItem(CUSTOM_EXERCISES_KEY),
+          AsyncStorage.getItem(BASE_EXERCISE_OVERRIDES_KEY),
+        ]);
+
+        if (storedCustom) {
+          const parsed: CustomExercise[] = JSON.parse(storedCustom);
+          if (Array.isArray(parsed)) setCustomExercises(parsed);
+        }
+
+        if (storedOverrides) {
+          const parsed: BaseExerciseOverride[] = JSON.parse(storedOverrides);
+          if (Array.isArray(parsed)) setBaseOverrides(parsed);
         }
       } finally {
         setIsLoading(false);
       }
     };
-
     void load();
   }, []);
 
+  // --- AsyncStorage helpers ---
   const saveCustomExercises = async (next: CustomExercise[]) => {
     setCustomExercises(next);
     await AsyncStorage.setItem(CUSTOM_EXERCISES_KEY, JSON.stringify(next));
   };
 
+  const saveBaseOverrides = async (next: BaseExerciseOverride[]) => {
+    setBaseOverrides(next);
+    await AsyncStorage.setItem(BASE_EXERCISE_OVERRIDES_KEY, JSON.stringify(next));
+  };
+
+  // --- Add custom exercise ---
   const handleAdd = async () => {
     if (!name.trim()) return;
     const trimmedDetails = details.trim();
@@ -48,13 +81,10 @@ export const SettingsScreen: React.FC = () => {
       id,
       sectionId: selectedSectionId,
       name: name.trim(),
-      details:
-        trimmedDetails ||
-        (seconds > 0 ? `${seconds}s timer` : 'Custom exercise'),
+      details: trimmedDetails || (seconds > 0 ? `${seconds}s timer` : 'Custom exercise'),
       timerSeconds: seconds > 0 ? seconds : undefined,
     };
-    const next = [...customExercises, exercise];
-    await saveCustomExercises(next);
+    await saveCustomExercises([...customExercises, exercise]);
     setName('');
     setDetails('');
     setUseTimer(false);
@@ -62,12 +92,82 @@ export const SettingsScreen: React.FC = () => {
   };
 
   const handleRemove = async (id: string) => {
-    const next = customExercises.filter((ex) => ex.id !== id);
-    await saveCustomExercises(next);
+    await saveCustomExercises(customExercises.filter((ex) => ex.id !== id));
   };
 
-  const sectionOptions = WORKOUT_SECTIONS;
+  // --- Base exercise editing ---
+  const beginEditBase = (exerciseId: string) => {
+    const base = BASE_EXERCISES.find((ex) => ex.id === exerciseId);
+    if (!base) return;
+    const override = baseOverrides.find((ov) => ov.id === exerciseId);
+    setEditingBaseId(exerciseId);
+    setEditName(override?.name ?? base.name);
+    setEditDetails(override?.details ?? base.details);
+    const timerSeconds = override?.timerSeconds ?? base.timerSeconds ?? 0;
+    setEditUseTimer(timerSeconds > 0);
+    setEditTimerSecondsInput(timerSeconds > 0 ? String(timerSeconds) : '');
+  };
 
+  const cancelEditBase = () => {
+    setEditingBaseId(null);
+    setEditName('');
+    setEditDetails('');
+    setEditUseTimer(false);
+    setEditTimerSecondsInput('');
+  };
+
+  const saveEditBase = async () => {
+    if (!editingBaseId) return;
+    const base = BASE_EXERCISES.find((ex) => ex.id === editingBaseId);
+    if (!base) return;
+
+    const trimmedName = editName.trim() || base.name;
+    const trimmedDetails = editDetails.trim() || base.details;
+    const seconds =
+      editUseTimer && editTimerSecondsInput ? Number.parseInt(editTimerSecondsInput, 10) || 0 : 0;
+
+    const existingIndex = baseOverrides.findIndex((ov) => ov.id === editingBaseId);
+    const next = [...baseOverrides];
+
+    const override: BaseExerciseOverride = {
+      id: editingBaseId,
+      name: trimmedName !== base.name ? trimmedName : undefined,
+      details: trimmedDetails !== base.details ? trimmedDetails : undefined,
+      timerSeconds: seconds > 0 && seconds !== (base.timerSeconds ?? 0) ? seconds : undefined,
+      deleted: next[existingIndex]?.deleted,
+    };
+
+    if (!override.name && !override.details && override.timerSeconds === undefined) {
+      if (existingIndex !== -1) next.splice(existingIndex, 1);
+    } else if (existingIndex !== -1) {
+      next[existingIndex] = override;
+    } else {
+      next.push(override);
+    }
+
+    await saveBaseOverrides(next);
+    cancelEditBase();
+  };
+
+  const toggleHideBase = async (exerciseId: string) => {
+    const existingIndex = baseOverrides.findIndex((ov) => ov.id === exerciseId);
+    const base = BASE_EXERCISES.find((ex) => ex.id === exerciseId);
+    if (!base) return;
+    const next = [...baseOverrides];
+    const current = existingIndex !== -1 ? next[existingIndex] : { id: exerciseId };
+    const deleted = !current.deleted;
+    const updated: BaseExerciseOverride = { ...current, deleted };
+    if (!updated.name && !updated.details && updated.timerSeconds === undefined && !deleted) {
+      if (existingIndex !== -1) next.splice(existingIndex, 1);
+    } else if (existingIndex !== -1) {
+      next[existingIndex] = updated;
+    } else {
+      next.push(updated);
+    }
+    await saveBaseOverrides(next);
+  };
+
+  // --- Memoized data ---
   const groupedCustom = useMemo(() => {
     const bySection: Record<string, CustomExercise[]> = {};
     for (const ex of customExercises) {
@@ -79,179 +179,102 @@ export const SettingsScreen: React.FC = () => {
 
   const totalBaseBySection = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const ex of BASE_EXERCISES) {
-      counts[ex.sectionId] = (counts[ex.sectionId] ?? 0) + 1;
-    }
+    for (const ex of BASE_EXERCISES) counts[ex.sectionId] = (counts[ex.sectionId] ?? 0) + 1;
     return counts;
   }, []);
 
+  const overridesById = useMemo(() => {
+    const map: Record<string, BaseExerciseOverride> = {};
+    for (const ov of baseOverrides) map[ov.id] = ov;
+    return map;
+  }, [baseOverrides]);
+
+  // --- Render ---
   return (
     <SafeAreaView className="flex-1 bg-slate-950">
-      <View className="px-5 pt-6 pb-4">
-        <Text className="text-slate-100 text-3xl font-extrabold tracking-tight">
-          Settings
-        </Text>
-        <Text className="text-slate-400 mt-1 text-sm">
-          Customize your plan with your own exercises.
-        </Text>
+      {/* Header */}
+      <View className="px-5 pb-4">
+        <Text className="text-slate-100 text-3xl font-extrabold tracking-tight">Settings</Text>
+        <Text className="text-slate-400 mt-1 text-sm">Customize your plan with your own exercises.</Text>
         <Text className="text-slate-500 mt-1 text-xs">
           New exercises will show up in the main workout under the section you choose.
         </Text>
       </View>
 
-      <ScrollView
-        className="flex-1"
-        contentContainerClassName="pb-10 px-5"
-        showsVerticalScrollIndicator={false}
-      >
-        <View className="rounded-2xl bg-slate-900/80 p-4 border border-slate-800 mb-4">
-          <Text className="text-slate-100 font-semibold text-sm mb-3">
-            Add a new exercise
-          </Text>
+      <ScrollView className="flex-1" contentContainerClassName="pb-10 px-5" showsVerticalScrollIndicator={false}>
+        {/* Add new exercise */}
+        <NewExerciseForm
+          name={name}
+          setName={setName}
+          details={details}
+          setDetails={setDetails}
+          useTimer={useTimer}
+          setUseTimer={setUseTimer}
+          timerInput={timerSecondsInput}
+          setTimerInput={setTimerSecondsInput}
+          selectedSection={selectedSectionId}
+          setSelectedSection={setSelectedSectionId}
+          onAdd={handleAdd}
+        />
 
-          <Text className="text-slate-400 text-xs mb-1">Section</Text>
-          <View className="flex-row flex-wrap gap-2 mb-3">
-            {sectionOptions.map((section) => {
-              const isActive = section.id === selectedSectionId;
-              return (
-                <Pressable
-                  key={section.id}
-                  onPress={() => setSelectedSectionId(section.id)}
-                  className={`px-3 py-1 rounded-full border ${
-                    isActive ? 'border-emerald-400 bg-emerald-500/10' : 'border-slate-700'
-                  }`}
-                >
-                  <Text
-                    className={`text-xs ${
-                      isActive ? 'text-emerald-300' : 'text-slate-300'
-                    }`}
-                  >
-                    {section.emoji} {section.title}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <Text className="text-slate-400 text-xs mb-1">Exercise name</Text>
-          <TextInput
-            value={name}
-            onChangeText={setName}
-            placeholder="e.g. Diamond Push-ups"
-            placeholderTextColor="#64748b"
-            className="text-slate-100 text-sm px-3 py-2 rounded-lg border border-slate-700 bg-slate-900 mb-3"
-          />
-
-          <Text className="text-slate-400 text-xs mb-1">
-            Details (reps, time, notes)
-          </Text>
-          <TextInput
-            value={details}
-            onChangeText={setDetails}
-            placeholder="e.g. 3 × 10, slow and controlled"
-            placeholderTextColor="#64748b"
-            className="text-slate-100 text-sm px-3 py-2 rounded-lg border border-slate-700 bg-slate-900 mb-4"
-          />
-
-          <View className="mb-3">
-            <View className="flex-row items-center justify-between mb-2">
-              <Text className="text-slate-400 text-xs">Timer (long-press to use)</Text>
-              <Pressable
-                onPress={() => setUseTimer((prev) => !prev)}
-                className={`px-3 py-1 rounded-full border ${
-                  useTimer ? 'border-emerald-400 bg-emerald-500/10' : 'border-slate-700'
-                }`}
-              >
-                <Text
-                  className={`text-xs ${
-                    useTimer ? 'text-emerald-300' : 'text-slate-300'
-                  }`}
-                >
-                  {useTimer ? 'Timer on' : 'No timer'}
-                </Text>
-              </Pressable>
-            </View>
-            {useTimer && (
-              <TextInput
-                value={timerSecondsInput}
-                onChangeText={setTimerSecondsInput}
-                keyboardType="numeric"
-                placeholder="Seconds (e.g. 30)"
-                placeholderTextColor="#64748b"
-                className="text-slate-100 text-sm px-3 py-2 rounded-lg border border-slate-700 bg-slate-900"
-              />
-            )}
-          </View>
-
-          <Pressable
-            onPress={handleAdd}
-            className={`mt-1 rounded-lg px-4 py-2 items-center ${
-              name.trim() ? 'bg-emerald-500' : 'bg-slate-700'
-            }`}
-            disabled={!name.trim()}
-          >
-            <Text
-              className={`text-sm font-semibold ${
-                name.trim() ? 'text-slate-950' : 'text-slate-400'
-              }`}
-            >
-              Add exercise
-            </Text>
-          </Pressable>
-        </View>
-
+        {/* Your exercises */}
         <View className="rounded-2xl bg-slate-900/80 border border-slate-800">
           <View className="px-4 py-3 border-b border-slate-800">
-            <Text className="text-slate-100 font-semibold text-sm">
-              Your custom exercises
-            </Text>
-            <Text className="text-slate-500 text-xs mt-1">
-              These are added on top of the base plan.
-            </Text>
+            <Text className="text-slate-100 font-semibold text-sm">Your exercises</Text>
+            <Text className="text-slate-500 text-xs mt-1">Edit the built-in plan or add your own exercises.</Text>
           </View>
 
           {isLoading ? (
             <View className="py-6 items-center">
               <Text className="text-slate-400 text-sm">Loading settings…</Text>
             </View>
-          ) : customExercises.length === 0 ? (
-            <View className="py-6 items-center px-6">
-              <Text className="text-slate-400 text-sm text-center">
-                You haven&apos;t added any custom exercises yet. Start by adding one above.
-              </Text>
-            </View>
           ) : (
-            sectionOptions.map((section) => {
+            WORKOUT_SECTIONS.map((section) => {
               const list = groupedCustom[section.id] ?? [];
-              if (list.length === 0) return null;
               const baseCount = totalBaseBySection[section.id] ?? 0;
+              if (baseCount === 0 && list.length === 0) return null;
+
               return (
                 <View key={section.id} className="border-t border-slate-800">
                   <View className="px-4 py-3 flex-row items-center justify-between">
                     <View>
-                      <Text className="text-slate-100 text-sm">
-                        {section.emoji} {section.title}
-                      </Text>
-                      <Text className="text-slate-500 text-xs">
-                        {baseCount} base · {list.length} custom
-                      </Text>
+                      <Text className="text-slate-100 text-sm">{section.emoji} {section.title}</Text>
+                      <Text className="text-slate-500 text-xs">{baseCount} base · {list.length} custom</Text>
                     </View>
                   </View>
-                  {list.map((ex) => (
-                    <View
+
+                  {/* Base exercises */}
+                  {BASE_EXERCISES.filter((ex) => ex.sectionId === section.id).map((ex) => (
+                    <BaseExerciseItem
                       key={ex.id}
-                      className="flex-row items-center justify-between px-4 py-3 border-t border-slate-900"
-                    >
+                      exercise={ex}
+                      override={overridesById[ex.id]}
+                      isEditing={editingBaseId === ex.id}
+                      editingState={{
+                        name: editName,
+                        setName: setEditName,
+                        details: editDetails,
+                        setDetails: setEditDetails,
+                        useTimer: editUseTimer,
+                        setUseTimer: setEditUseTimer,
+                        timerInput: editTimerSecondsInput,
+                        setTimerInput: setEditTimerSecondsInput,
+                      }}
+                      beginEdit={() => beginEditBase(ex.id)}
+                      cancelEdit={cancelEditBase}
+                      saveEdit={saveEditBase}
+                      toggleHide={() => void toggleHideBase(ex.id)}
+                    />
+                  ))}
+
+                  {/* Custom exercises */}
+                  {list.map((ex) => (
+                    <View key={ex.id} className="flex-row items-center justify-between px-4 py-3 border-t border-slate-900">
                       <View className="flex-1 pr-3">
                         <Text className="text-slate-100 text-sm">{ex.name}</Text>
-                        <Text className="text-slate-500 text-xs mt-0.5">
-                          {ex.details}
-                        </Text>
+                        <Text className="text-slate-500 text-xs mt-0.5">{ex.details}</Text>
                       </View>
-                      <Pressable
-                        onPress={() => void handleRemove(ex.id)}
-                        className="px-2 py-1 rounded-full border border-slate-700"
-                      >
+                      <Pressable onPress={() => void handleRemove(ex.id)} className="px-2 py-1 rounded-full border border-slate-700">
                         <Text className="text-[11px] text-slate-400">Remove</Text>
                       </Pressable>
                     </View>
@@ -265,4 +288,3 @@ export const SettingsScreen: React.FC = () => {
     </SafeAreaView>
   );
 };
-

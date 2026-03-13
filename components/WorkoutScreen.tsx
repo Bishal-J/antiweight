@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, View, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { CUSTOM_EXERCISES_KEY, getTodayKey } from 'lib/workoutStorage';
+import { BASE_EXERCISE_OVERRIDES_KEY, CUSTOM_EXERCISES_KEY, getTodayKey } from 'lib/workoutStorage';
 import {
   BASE_EXERCISES,
   BASE_TOTAL_EXERCISES,
@@ -19,17 +19,7 @@ type SectionWithExercises = WorkoutSection & {
 export const WorkoutScreen: React.FC = () => {
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
-  const [sections, setSections] = useState<SectionWithExercises[]>(() => {
-    const bySection: Record<string, WorkoutExercise[]> = {};
-    for (const ex of BASE_EXERCISES) {
-      if (!bySection[ex.sectionId]) bySection[ex.sectionId] = [];
-      bySection[ex.sectionId].push(ex);
-    }
-    return WORKOUT_SECTIONS.map((section) => ({
-      ...section,
-      exercises: bySection[section.id] ?? [],
-    }));
-  });
+  const [sections, setSections] = useState<SectionWithExercises[]>([]);
 
   const allExerciseIds = useMemo(
     () => sections.flatMap((section) => section.exercises.map((ex) => ex.id)),
@@ -74,28 +64,67 @@ export const WorkoutScreen: React.FC = () => {
       await loadProgress();
 
       try {
-        const storedCustom = await AsyncStorage.getItem(CUSTOM_EXERCISES_KEY);
+        const [storedCustom, storedOverrides] = await Promise.all([
+          AsyncStorage.getItem(CUSTOM_EXERCISES_KEY),
+          AsyncStorage.getItem(BASE_EXERCISE_OVERRIDES_KEY),
+        ]);
+
+        let custom: WorkoutExercise[] = [];
         if (storedCustom) {
           const parsed: WorkoutExercise[] = JSON.parse(storedCustom);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setSections((prev) => {
-              const byId = new Map<string, SectionWithExercises>();
-              prev.forEach((s) =>
-                byId.set(s.id, {
-                  ...s,
-                  exercises: [...s.exercises],
-                })
-              );
-              for (const ex of parsed) {
-                const target = byId.get(ex.sectionId);
-                if (target) {
-                  target.exercises.push(ex);
-                }
+          if (Array.isArray(parsed)) {
+            custom = parsed;
+          }
+        }
+
+        let overridesById = new Map<
+          string,
+          { name?: string; details?: string; timerSeconds?: number; deleted?: boolean }
+        >();
+        if (storedOverrides) {
+          const parsed: any[] = JSON.parse(storedOverrides);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((ov) => {
+              if (ov && typeof ov.id === 'string') {
+                overridesById.set(ov.id, {
+                  name: ov.name,
+                  details: ov.details,
+                  timerSeconds: ov.timerSeconds,
+                  deleted: ov.deleted,
+                });
               }
-              return Array.from(byId.values());
             });
           }
         }
+
+        const bySection: Record<string, WorkoutExercise[]> = {};
+
+        // base exercises with overrides
+        for (const base of BASE_EXERCISES) {
+          const ov = overridesById.get(base.id);
+          if (ov?.deleted) continue;
+          const effective: WorkoutExercise = {
+            ...base,
+            ...(ov?.name ? { name: ov.name } : null),
+            ...(ov?.details ? { details: ov.details } : null),
+            ...(ov?.timerSeconds !== undefined ? { timerSeconds: ov.timerSeconds } : null),
+          };
+          if (!bySection[effective.sectionId]) bySection[effective.sectionId] = [];
+          bySection[effective.sectionId].push(effective);
+        }
+
+        // custom exercises
+        for (const ex of custom) {
+          if (!bySection[ex.sectionId]) bySection[ex.sectionId] = [];
+          bySection[ex.sectionId].push(ex);
+        }
+
+        const nextSections: SectionWithExercises[] = WORKOUT_SECTIONS.map((section) => ({
+          ...section,
+          exercises: bySection[section.id] ?? [],
+        }));
+
+        setSections(nextSections);
       } catch {
         // ignore
       }

@@ -7,6 +7,14 @@ export type WorkoutSectionId =
   | 'final_cardio'
   | 'cool_down';
 
+export type BaseExerciseOverride = {
+  id: string;
+  name?: string;
+  details?: string;
+  timerSeconds?: number;
+  deleted?: boolean;
+};
+
 export type WorkoutExercise = {
   id: string;
   sectionId: WorkoutSectionId;

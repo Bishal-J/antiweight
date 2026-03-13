@@ -1,5 +1,6 @@
 export const STORAGE_KEY_PREFIX = 'daily_workout_progress_';
 export const CUSTOM_EXERCISES_KEY = 'custom_exercises_v1';
+export const BASE_EXERCISE_OVERRIDES_KEY = 'base_exercise_overrides_v1';
 
 export const getDateKey = (date: Date) => {
   const yyyy = date.getFullYear();
